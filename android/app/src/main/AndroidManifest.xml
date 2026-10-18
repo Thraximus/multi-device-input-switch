@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Version and SDK levels come from app/build.gradle.kts (version: android/VERSION). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+   >
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Both granted over ADB by the hub at install time; together they let us notice and read copies
+         made in other apps (Android 10+ only lets the focused app read the clipboard). -->
+    <uses-permission android:name="android.permission.READ_LOGS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Android 11+ hides other apps by default; the notifications feature needs their names and icons.
+         The app is installed by the hub over ADB, not through a store. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Updates over Wi-Fi from the hub (the hub grants "install unknown apps" over ADB at install). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <!-- Calls feature (granted by the hub over ADB): ringing state, number, contact name/photo, answer/decline. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+
+    <application
+        android:label="Switcher"
+        android:icon="@drawable/ic_launcher"
+        android:allowBackup="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Started by the hub over ADB with the pairing token. DUMP is held by the adb shell but can't
+             be obtained by ordinary apps, so nothing else on the tablet can start a pairing. -->
+        <activity
+            android:name=".PairActivity"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+
+        <service
+            android:name=".AgentService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the connection to the user's own keyboard/clipboard hub on the LAN" />
+        </service>
+
+        <!-- Notifications feature. Disabled until the feature is turned on (from the PC), so Android
+             doesn't bind it at all while the feature is off. -->
+        <service
+            android:name=".features.NotificationListener"
+            android:enabled="false"
+            android:exported="true"
+            android:label="Switcher notifications"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- Buttons on notifications mirrored from the user's other devices. -->
+        <receiver
+            android:name=".features.MirrorActionReceiver"
+            android:exported="false" />
+
+        <!-- PackageInstaller's result for a self-update. -->
+        <receiver
+            android:name=".core.UpdateReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Serves images we put on the clipboard; apps that paste get access through the clip. -->
+        <provider
+            android:name=".ClipProvider"
+            android:authorities="${applicationId}.clip"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>

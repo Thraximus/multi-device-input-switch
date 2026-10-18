@@ -1,0 +1,19 @@
+firmware/build/
+__pycache__/
+firmware/esp32/build/
+firmware/esp32/sdkconfig
+firmware/esp32/sdkconfig.old
+firmware/esp32/managed_components/
+firmware/esp32/dependencies.lock
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+# Local-only material (screenshot tool, rendered screenshots, sample data): never published
+local/
+
+# Local settings and secrets (see .env.example)
+.env
+
+# Assistant notes (handover, plans, memories): local only
+.claude/

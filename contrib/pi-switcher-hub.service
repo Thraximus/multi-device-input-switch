@@ -1,0 +1,14 @@
+# systemd user unit. Install with: tools/install-service.sh
+[Unit]
+Description=pi-switcher-hub (keyboard/mouse switcher hub)
+After=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+ExecStart=@PYTHON@ -m hub.service
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
