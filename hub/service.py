@@ -12,10 +12,12 @@ from .clipboard import ClipboardService
 from .remote import RemoteInput
 from .config import Config
 from .devices import DevicePool
+from .display import Display
 from .notifications import DesktopNotifications
 from .router import Router
 from .security import Identity
 from .targets import BleChannel, BleTarget, PicoTarget
+from .touchpad import Touchpads
 
 log = logging.getLogger("hub")
 
@@ -40,6 +42,8 @@ class Hub:
         self.agent_settings = AgentSettings(self.config)
         self.notifications = DesktopNotifications(self)
         self.remote = RemoteInput(self)
+        self.touchpads = Touchpads(self)
+        self.display = Display(self)
         # Audio routing is parked until the Bluetooth dongle (phone) and the agent's audio stream
         # (laptop) exist; the state already carries where audio should play so GUIs can show it.
         self.audio_output = None  # machine id whose speakers/headphones get everyone's audio
@@ -103,13 +107,16 @@ class Hub:
         for target in self.targets.values():
             target.start()
         self.pool.start()
+        self.display.start()
 
     async def stop(self):
         self.router.switch(None)
+        self.display.stop()
         for target in self.targets.values():
             target.stop()
         self.pool.stop()
         self.remote.close()
+        self.touchpads.close()
         await self.clipboard.stop()
         await self.notifications.stop()
         await self.api.stop()
@@ -152,6 +159,7 @@ class Hub:
     def _push_state(self):
         self._state_scheduled = False
         self.api.broadcast(self.state())
+        self.display.update()
 
 
 async def main():

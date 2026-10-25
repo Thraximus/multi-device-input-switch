@@ -8,12 +8,17 @@ import androidx.compose.ui.test.onRoot
 import com.github.takahirom.roborazzi.captureRoboImage
 import online.thrax.switcher.core.AppState
 import online.thrax.switcher.core.Holder
+import online.thrax.switcher.core.Machine
 import online.thrax.switcher.features.Fix
 import online.thrax.switcher.features.Need
 import online.thrax.switcher.theme.Skin
 import online.thrax.switcher.theme.SwitcherTheme
 import online.thrax.switcher.ui.FeatureCard
 import online.thrax.switcher.ui.HomeScreen
+import online.thrax.switcher.ui.KeySink
+import online.thrax.switcher.ui.KeyboardState
+import online.thrax.switcher.ui.PadInput
+import online.thrax.switcher.ui.TouchpadScreen
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,10 +37,15 @@ class HomeScreenshotTest {
     @get:Rule
     val compose = createComposeRule()
 
+    private val machines = listOf(
+        Machine(null, "desktop", "linux", true), Machine("laptop", "Laptop", "pico", true),
+        Machine("bt-7d7c", "Phone", "ble", true), Machine("bt-21aa", "Tablet", "ble", true),
+    )
+
     private val state = AppState(
         paired = true, host = "192.168.1.10", agentId = "a1b2c3d4e5f60718", connected = true,
         connection = "Connected to 192.168.1.10",
-        holder = Holder("Laptop", here = false, selfTarget = "bt-7d7c", pending = false),
+        holder = Holder("Laptop", here = false, selfTarget = "bt-7d7c", pending = false, machines = machines, at = "laptop"),
         enabled = mapOf("clipboard" to true),
     )
 
@@ -53,7 +63,7 @@ class HomeScreenshotTest {
     private fun shot(skin: Skin, name: String, s: AppState = state) {
         compose.setContent {
             SwitcherTheme(skin) {
-                HomeScreen(s, "Pixel 8", "0.7.1", cards, onUseHere = {}, onReturn = {}, onFix = {})
+                HomeScreen(s, "Pixel 8", "0.7.1", cards, onSwitch = {}, onConnect = {}, onDisconnect = {}, onFix = {})
             }
         }
         compose.onRoot().captureRoboImage("build/outputs/roborazzi/$name.png")
@@ -62,7 +72,33 @@ class HomeScreenshotTest {
     @Test fun material() = shot(Skin.Material, "home-material")
     @Test fun cogitator() = shot(Skin.Cogitator, "home-cogitator")
     @Test fun cogitatorHere() = shot(Skin.Cogitator, "home-cogitator-here",
-        state.copy(holder = Holder("Phone", here = true, selfTarget = "bt-7d7c", pending = false)))
+        state.copy(holder = Holder("Phone", here = true, selfTarget = "bt-7d7c", pending = false, machines = machines,
+            at = "bt-7d7c")))
+    @Test fun disconnected() = shot(Skin.Material, "home-material-disconnected",
+        state.copy(stopped = true, connected = false, connection = "Disconnected", holder = null))
+
+    private val pad = object : PadInput {
+        override fun move(dx: Float, dy: Float) {}
+        override fun scroll(dx: Float, dy: Float) {}
+        override fun tap(fingers: Int) {}
+        override fun button(bit: Int, down: Boolean) {}
+    }
+
+    private fun touchpad(skin: Skin, name: String) {
+        compose.setContent {
+            SwitcherTheme(skin) {
+                TouchpadScreen(machines.filter { it.id != "bt-7d7c" }, "laptop", "", 1f, {}, {}, {}, pad,
+                    KeyboardState(object : KeySink {
+                        override fun text(text: String) {}
+                        override fun key(name: String) {}
+                    }, emptySet(), {}, ""))
+            }
+        }
+        compose.onRoot().captureRoboImage("build/outputs/roborazzi/$name.png")
+    }
+
+    @Test fun touchpadMaterial() = touchpad(Skin.Material, "touchpad-material")
+    @Test fun touchpadCogitator() = touchpad(Skin.Cogitator, "touchpad-cogitator")
     @Test fun offline() = shot(Skin.Material, "home-material-offline",
         state.copy(connected = false, connection = "Hub not reachable — retrying", holder = null))
 }

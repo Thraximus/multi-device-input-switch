@@ -18,11 +18,14 @@ import html
 import logging
 import os
 import re
+import time
 from pathlib import Path
 
 from jeepney import DBusAddress, HeaderFields, MatchRule, message_bus, new_method_call
 from jeepney.wrappers import unwrap_msg
 from jeepney.io.asyncio import Proxy, open_dbus_router
+
+from . import env
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +34,9 @@ NOTIFICATIONS = DBusAddress("/org/freedesktop/Notifications", bus_name="org.free
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "pi-switcher-hub"
 ICON_DIR = CACHE / "icons"      # app icons, per package
 IMAGE_DIR = CACHE / "images"    # notification pictures, per notification
+# How long a popup stays up. Apps often withdraw a notification moments after posting it (to re-post or
+# regroup it); a popup is never taken down by that before it has been up this long.
+POPUP_SECONDS = env.get_int("SWITCHER_NOTIFICATION_SECONDS", 8)
 
 
 def save_app_icons(apps):
@@ -62,6 +68,7 @@ class DesktopNotifications:
         self.call_keys = {}  # agent id -> notification key of a ringing app call (WhatsApp, LINE, …)
         self.mirrored = {}  # (agent id, key) -> mirror id (sent to other devices)
         self.by_mirror = {}  # mirror id -> (agent id, key)
+        self.posted_at = {}  # (agent id, key) -> monotonic time it last popped up
 
     @property
     def desktop_enabled(self):
@@ -130,6 +137,11 @@ class DesktopNotifications:
     # --- from devices -----------------------------------------------------------------------------------
 
     def posted(self, agent, msg):
+        key = (agent["id"], str(msg.get("key", "")))
+        if not msg.get("replay"):
+            self.posted_at[key] = time.monotonic()
+        log.info("notification from %s: %s%s", self._device_name(agent), str(msg.get("app", "?"))[:40],
+                 " (replay)" if msg.get("replay") else "")
         if self.desktop_enabled:
             asyncio.ensure_future(self._show(agent, msg))
         self._mirror(agent, msg)
@@ -238,7 +250,7 @@ class DesktopNotifications:
             hints["x-kde-reply-placeholder-text"] = ("s", f"Reply on {device}…")
         call = new_method_call(NOTIFICATIONS, "Notify", "susssasa{sv}i", (
             app, self.shown.get(key, 0), str(icon_path) if icon_path.is_file() else "smartphone",
-            str(msg.get("title", ""))[:200], self._body(msg), actions, hints, -1))
+            str(msg.get("title", ""))[:200], self._body(msg), actions, hints, POPUP_SECONDS * 1000))
         try:
             # unwrap_msg: a D-Bus error comes back as a normal reply otherwise, and would pass silently
             nid = unwrap_msg(await self.router.send_and_get_reply(call))[0]
@@ -276,10 +288,23 @@ class DesktopNotifications:
             return None
 
     def removed(self, agent, key):
-        nid = self.shown.get((agent["id"], str(key)))
+        key = (agent["id"], str(key))
+        stamp = self.posted_at.get(key)
+        age = time.monotonic() - stamp if stamp is not None else POPUP_SECONDS
+        log.info("notification withdrawn on %s after %.1f s", self._device_name(agent), age)
+        if age < POPUP_SECONDS:  # let it be seen first; dropped if it's re-posted meanwhile
+            asyncio.get_running_loop().call_later(POPUP_SECONDS - age, self._withdraw, key, stamp)
+        else:
+            self._withdraw(key, stamp)
+
+    def _withdraw(self, key, stamp):
+        if self.posted_at.get(key) != stamp:
+            return  # posted again since: the newer one stays
+        self.posted_at.pop(key, None)
+        nid = self.shown.get(key)
         if nid is not None:
             self._close(nid)
-        self._unmirror((agent["id"], str(key)))
+        self._unmirror(key)
 
     def close_all(self, agent_id):
         """The device turned the feature off or disconnected: its notifications go too."""
@@ -288,6 +313,8 @@ class DesktopNotifications:
                 self._close(nid)
         for key in [k for k in self.mirrored if k[0] == agent_id]:
             self._unmirror(key)
+        for key in [k for k in self.posted_at if k[0] == agent_id]:
+            del self.posted_at[key]
 
     def _close(self, nid):
         entry = self.by_id.get(nid)

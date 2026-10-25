@@ -7,8 +7,8 @@ Three listeners, all speaking JSON messages over WebSockets:
   and serves the agent bootstrap download over HTTPS (GET /agent/<token>/...), token required.
 
 Agents send {"type": "hello", "capabilities": [...]} after connecting; features are only offered to
-agents that announce them ("clipboard", "gamepad", "pico-flash", "tray"; "audio" reserved). Agents with
-"tray" are pushed {"type": "status"} (holder + targets) and may send "switch".
+agents that announce them ("clipboard", "gamepad", "pico-flash", "tray", "touchpad", …; "audio" reserved).
+Agents with "tray" are pushed {"type": "status"} (holder + targets) and may send "switch".
 
 Requests carry an optional "id" which is echoed in the reply. The hub pushes {"type": "state"} to
 every subscribed connection whenever something changes.
@@ -160,6 +160,7 @@ class Api:
             self._tray_last.pop(conn, None)
             if agent["id"] not in self.agent_conns.values():
                 self.hub.remote.agent_gone(agent["id"])
+                self.hub.touchpads.agent_gone(agent["id"])
                 self.hub.notifications.close_all(agent["id"])
                 self.hub.notifications.call(agent, {"state": "ended"})
             self.hub.state_changed()
@@ -232,7 +233,14 @@ class Api:
                 self.hub.notifications.close_all(agent["id"])
             if "calls" not in self.agent_caps[conn]:
                 self.hub.notifications.call(agent, {"state": "ended"})
+            if "touchpad" not in self.agent_caps[conn]:
+                self.hub.touchpads.agent_gone(agent["id"])
             self.hub.state_changed()
+            return None
+        if agent is not None and kind in ("pointer", "keys"):
+            if "touchpad" in self.agent_caps.get(conn, ()):
+                reply = lambda msg: asyncio.ensure_future(self._send(conn, json.dumps(msg)))
+                getattr(self.hub.touchpads, "pointer" if kind == "pointer" else "keys")(agent, req, reply)
             return None
         if agent is not None and kind == "call":
             if "calls" in self.agent_caps.get(conn, ()):
@@ -312,6 +320,12 @@ class Api:
                 return {"type": "error", "error": "no Bluetooth channel configured"}
             for ble in channels:
                 ble.start_pairing(int(req.get("seconds", 120)))
+            return {"type": "ok"}
+        if local and kind == "ble_confirm":
+            channel = next((c for c in self.hub.bluetooth_channels() if c.passkey), None)
+            if channel is None:
+                return {"type": "error", "error": "no pairing code is waiting for approval"}
+            channel.confirm(bool(req.get("accept", True)))
             return {"type": "ok"}
         if local and kind == "forget_target":
             self.hub.forget_target(req["target"])

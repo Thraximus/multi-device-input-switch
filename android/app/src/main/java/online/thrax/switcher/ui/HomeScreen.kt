@@ -20,6 +20,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.KeyboardReturn
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,8 +57,10 @@ fun HomeScreen(
     device: String,
     version: String,
     features: List<FeatureCard>,
-    onUseHere: () -> Unit,
-    onReturn: () -> Unit,
+    /** Send the keyboard/mouse to a machine (a target id; null for the hub's PC). */
+    onSwitch: (String?) -> Unit,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
     onFix: (Fix) -> Unit,
 ) {
     val tk = LocalTokens.current
@@ -78,7 +82,7 @@ fun HomeScreen(
     ) {
         Column(Modifier.widthIn(max = 640.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Header(device, state)
-            HubPanel(state, onUseHere, onReturn)
+            HubPanel(state, onSwitch, onConnect, onDisconnect)
             SectionDivider("Features")
             for (f in features) FeaturePanel(f, onFix)
             Spacer(Modifier.height(6.dp))
@@ -108,16 +112,31 @@ private fun Header(device: String, state: AppState) {
 }
 
 @Composable
-private fun HubPanel(state: AppState, onUseHere: () -> Unit, onReturn: () -> Unit) {
+private fun HubPanel(state: AppState, onSwitch: (String?) -> Unit, onConnect: () -> Unit, onDisconnect: () -> Unit) {
     val holder = state.holder
     Panel(active = holder?.here == true) {
         PanelHead("Hub", Icons.Outlined.Hub) {
-            Pill(if (state.connected) "Online" else "Offline", if (state.connected) Level.Ok else Level.Bad)
+            when {
+                state.stopped -> Pill("Off")
+                state.connected -> Pill("Online", Level.Ok)
+                else -> Pill("Offline", Level.Bad)
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Dot(if (state.connected) Level.Ok else if (state.paired) Level.Warn else Level.Bad)
-            Body(state.connection)
+            Dot(when {
+                state.stopped -> Level.Idle
+                state.connected -> Level.Ok
+                state.paired -> Level.Warn
+                else -> Level.Bad
+            })
+            Body(state.connection, Modifier.weight(1f))
+            if (state.stopped) {
+                Btn("Connect", onConnect, style = BtnStyle.Primary, icon = Icons.Outlined.Link)
+            } else if (state.paired) {
+                Btn("Disconnect", onDisconnect, style = BtnStyle.Quiet, icon = Icons.Outlined.LinkOff)
+            }
         }
+        if (state.stopped) Label("Every feature is off until you connect again")
         if (holder != null) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Column(Modifier.weight(1f)) {
@@ -126,11 +145,19 @@ private fun HubPanel(state: AppState, onUseHere: () -> Unit, onReturn: () -> Uni
                     if (holder.pending) Label("switching once all keys are released")
                 }
                 if (holder.here) {
-                    Btn("Return to PC", onReturn, style = BtnStyle.Normal, icon = Icons.Outlined.KeyboardReturn)
+                    Btn("Return to PC", { onSwitch(null) }, style = BtnStyle.Normal, icon = Icons.Outlined.KeyboardReturn)
                 } else {
-                    Btn("Use here", onUseHere, style = BtnStyle.Primary, icon = Icons.Outlined.Keyboard,
+                    Btn("Use here", { onSwitch(holder.selfTarget) }, style = BtnStyle.Primary, icon = Icons.Outlined.Keyboard,
                         enabled = holder.selfTarget != null)
                 }
+            }
+            // Everywhere else they can go: the button above covers this device and (from here) the PC.
+            val others = holder.machines.filter {
+                it.connected && it.id != holder.at && it.id != holder.selfTarget && !(holder.here && it.id == null)
+            }
+            if (others.isNotEmpty()) {
+                Label("Send to")
+                MachinePicker(others, { false }, { onSwitch(it.id) })
             }
         }
     }

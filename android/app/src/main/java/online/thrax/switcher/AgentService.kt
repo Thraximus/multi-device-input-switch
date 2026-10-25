@@ -17,6 +17,7 @@ import android.util.Log
 import online.thrax.switcher.core.App
 import online.thrax.switcher.core.DeviceConfig
 import online.thrax.switcher.core.Holder
+import online.thrax.switcher.core.Machine
 import online.thrax.switcher.core.Updater
 import online.thrax.switcher.features.Feature
 import online.thrax.switcher.features.FeatureHost
@@ -79,6 +80,10 @@ class AgentService : Service(), FeatureHost {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_DISCONNECT || config.stopped) {  // the notification's button, or a restart after it
+            disconnect(this)
+            return START_NOT_STICKY
+        }
         if (!running) {
             running = true
             Thread(::run, "hub").start()
@@ -93,6 +98,8 @@ class AgentService : Service(), FeatureHost {
         active.values.forEach { it.stop() }
         active.clear()
         sender.shutdownNow()
+        App.state.value = App.state.value.copy(connected = false, holder = null,
+            connection = if (config.stopped) "Disconnected" else "Stopped")
         super.onDestroy()
     }
 
@@ -114,15 +121,9 @@ class AgentService : Service(), FeatureHost {
         }
     }
 
-    /** Ask the hub to send the keyboard/mouse here. */
-    fun useKeyboardHere() {
-        val target = App.state.value.holder?.selfTarget ?: return
-        send(JSONObject().put("type", "switch").put("id", ids.incrementAndGet()).put("target", target))
-    }
-
-    /** Hand the keyboard/mouse back to the PC (the hub's own machine). */
-    fun returnKeyboard() {
-        send(JSONObject().put("type", "switch").put("id", ids.incrementAndGet()).put("target", JSONObject.NULL))
+    /** Ask the hub to send the keyboard/mouse to a machine: a target id, or null for the hub's own PC. */
+    fun switchTo(target: String?) {
+        send(JSONObject().put("type", "switch").put("id", ids.incrementAndGet()).put("target", target ?: JSONObject.NULL))
     }
 
     // --- features ----------------------------------------------------------------------------------
@@ -175,13 +176,14 @@ class AgentService : Service(), FeatureHost {
         val self = msg.optString("self").ifEmpty { null }
         val holderId = if (msg.isNull("holder")) null else msg.optString("holder")
         val targets = msg.optJSONArray("targets") ?: JSONArray()
-        var name = msg.optString("hub", "the PC")
+        val machines = mutableListOf(Machine(null, msg.optString("hub", "the PC"), "linux", true))
         for (i in 0 until targets.length()) {
             val t = targets.getJSONObject(i)
-            if (t.optString("id") == holderId) name = t.optString("name")
+            machines += Machine(t.optString("id"), t.optString("name"), t.optString("kind"), t.optBoolean("connected"))
         }
+        val name = machines.firstOrNull { it.id == holderId }?.name ?: machines[0].name
         App.state.value = App.state.value.copy(
-            holder = Holder(name, holderId != null && holderId == self, self, !msg.isNull("pending")),
+            holder = Holder(name, holderId != null && holderId == self, self, !msg.isNull("pending"), machines, holderId),
         )
     }
 
@@ -189,16 +191,20 @@ class AgentService : Service(), FeatureHost {
 
     private fun notification(text: String): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val disconnect = PendingIntent.getService(this, 0, Intent(this, AgentService::class.java).setAction(ACTION_DISCONNECT),
+            PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_switcher)
             .setContentTitle("Switcher")
             .setContentText(text)
             .setContentIntent(open)
+            .addAction(Notification.Action.Builder(null, "Disconnect", disconnect).build())
             .setOngoing(true)
             .build()
     }
 
     private fun setConnection(text: String, up: Boolean) {
+        if (!running) return  // disconnecting: the connection thread's last words don't count
         App.state.value = App.state.value.copy(connection = text, connected = up)
         getSystemService(NotificationManager::class.java).notify(NOTE_STATUS, notification(text))
     }
@@ -295,6 +301,7 @@ class AgentService : Service(), FeatureHost {
         private const val NOTE_STATUS = 1
         private const val READ_TIMEOUT_MS = 60_000  // the hub pings every 20 s
         private const val PING_MS = 25_000
+        private const val ACTION_DISCONNECT = "disconnect"
 
         @Volatile
         var instance: AgentService? = null
@@ -304,6 +311,21 @@ class AgentService : Service(), FeatureHost {
         fun start(ctx: Context) {
             val i = Intent(ctx, AgentService::class.java)
             if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+        }
+
+        /** Connect again after [disconnect]. */
+        fun connect(ctx: Context) {
+            DeviceConfig(ctx).stopped = false
+            App.state.value = App.state.value.copy(stopped = false, connection = "connecting…")
+            start(ctx)
+        }
+
+        /** Close the connection and stop every feature; stays that way (reboots too) until [connect]. */
+        fun disconnect(ctx: Context) {
+            DeviceConfig(ctx).stopped = true
+            App.state.value = App.state.value.copy(stopped = true, connected = false, holder = null,
+                connection = "Disconnected")
+            ctx.stopService(Intent(ctx, AgentService::class.java))
         }
 
         private fun sleep(seconds: Int) = try {

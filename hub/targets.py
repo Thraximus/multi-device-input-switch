@@ -416,7 +416,7 @@ class BleChannel:
         self.connected = {}    # address -> connection interval (ms)
         self.selected = None   # address receiving input
         self.pairing = False
-        self.passkey = None
+        self.passkey = None    # code of a new host waiting for approval (confirm())
         self._last_status = 0.0
 
     @property
@@ -446,6 +446,14 @@ class BleChannel:
 
     def start_pairing(self, seconds=120):
         self.send_frame(protocol.MSG_BLE_PAIR, bytes([min(seconds, 255)]))
+
+    def confirm(self, accept):
+        """Approve (or refuse) the pairing code of a new host: nobody bonds without the hub's user saying so."""
+        if self.passkey is None:
+            raise ValueError("no pairing code waiting for approval")
+        self.send_frame(protocol.MSG_BLE_CONFIRM, bytes((1 if accept else 0,)))
+        self.passkey = None
+        self._notify()
 
     def forget(self, address=None):
         self.send_frame(protocol.MSG_BLE_FORGET, bytes.fromhex(address.replace(":", "")) if address else b"")

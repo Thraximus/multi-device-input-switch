@@ -2,15 +2,16 @@ package online.thrax.switcher.features
 
 /**
  * Every feature the app has, in the order the home screen shows them. New features (notifications,
- * calls/SMS, files, touchpad) are added here; nothing else needs to know about them.
+ * calls/SMS, files) are added here; nothing else needs to know about them.
  */
 object Features {
     val clipboard = ClipboardFeature()
     val notifications = NotificationsFeature()
     val notificationMirror = NotificationMirrorFeature()
     val calls = CallsFeature()
+    val touchpad = TouchpadFeature()
 
-    private val every: List<Feature> = listOf(clipboard, notifications, notificationMirror, calls)
+    private val every: List<Feature> = listOf(clipboard, touchpad, notifications, notificationMirror, calls)
 
     /** The features this device can run (set once at app start, see [init]). */
     var all: List<Feature> = every

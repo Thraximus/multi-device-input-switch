@@ -5,6 +5,7 @@
   python3 -m hub.ctl transfer DEVICE_ID on|off
   python3 -m hub.ctl pair TARGET
   python3 -m hub.ctl ble-pair [SECONDS]      (let a new phone/tablet pair; it becomes a new target)
+  python3 -m hub.ctl ble-confirm [--reject]  (approve the pairing code once it matches the phone/tablet)
   python3 -m hub.ctl forget TARGET           (unpair a Bluetooth target)
   python3 -m hub.ctl rename TARGET NAME
   python3 -m hub.ctl install-agent TARGET [--layout us|uk] (types the agent install command on it)
@@ -53,7 +54,7 @@ def print_state(s):
         if b["pairing"]:
             line += ", PAIRING OPEN"
         if b.get("passkey"):
-            line += f", pairing code {b['passkey']} (must match the phone/tablet)"
+            line += f", pairing code {b['passkey']}: if it matches the phone/tablet, run ble-confirm"
         print(f"  bluetooth  {line}")
     print("\ndevices:")
     for d in s["devices"]:
@@ -96,6 +97,8 @@ def main():
     p.add_argument("target")
     p = sub.add_parser("ble-pair")
     p.add_argument("seconds", nargs="?", type=int, default=120)
+    p = sub.add_parser("ble-confirm")
+    p.add_argument("--reject", action="store_true")
     p = sub.add_parser("forget")
     p.add_argument("target")
     p = sub.add_parser("flash-pico")
@@ -124,6 +127,8 @@ def main():
             print(asyncio.run(request({"type": "set_transfer", "device": args.device, "enabled": args.state == "on"})))
         elif args.cmd == "ble-pair":
             print(asyncio.run(request({"type": "ble_pair", "seconds": args.seconds})))
+        elif args.cmd == "ble-confirm":
+            print(asyncio.run(request({"type": "ble_confirm", "accept": not args.reject})))
         elif args.cmd == "forget":
             print(asyncio.run(request({"type": "forget_target", "target": args.target})))
         elif args.cmd == "flash-pico":

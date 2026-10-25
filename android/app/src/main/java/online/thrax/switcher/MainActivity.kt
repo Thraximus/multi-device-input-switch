@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import online.thrax.switcher.core.App
+import online.thrax.switcher.core.DeviceConfig
 import online.thrax.switcher.features.Features
 import online.thrax.switcher.features.Fix
 import online.thrax.switcher.theme.Skin
@@ -25,7 +26,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         Features.init(this)
-        if (HubState(this).paired()) AgentService.start(this)
+        val stopped = DeviceConfig(this).stopped
+        if (stopped) {
+            App.state.value = App.state.value.copy(stopped = true, connection = "Disconnected")
+        } else if (HubState(this).paired()) {
+            AgentService.start(this)
+        }
         val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "dev"
         setContent {
             val state by App.state.collectAsState()
@@ -49,8 +55,9 @@ class MainActivity : ComponentActivity() {
                     }
                     HomeScreen(
                         state = state, device = Build.MODEL, version = version, features = cards,
-                        onUseHere = { AgentService.instance?.useKeyboardHere() },
-                        onReturn = { AgentService.instance?.returnKeyboard() },
+                        onSwitch = { AgentService.instance?.switchTo(it) },
+                        onConnect = { AgentService.connect(this) },
+                        onDisconnect = { AgentService.disconnect(this) },
                         onFix = { fix ->
                             when (fix) {
                                 is Fix.OpenSettings -> startActivity(fix.intent(this))

@@ -44,6 +44,8 @@ MSG_BLE_HOSTS = 0x85    # reply: n x (6-byte address, u16 connection interval in
 # On the Bluetooth channel MSG_KBD_LEDS carries the host address first: 6-byte address, u8 LEDs.
 # Bluetooth STATUS flags: STATUS_MOUNTED = a bonded host is connected; plus:
 STATUS_PAIRING = 0x04
+MSG_BLE_CONFIRM = 0x0D   # u8 1/0: approve/reject the pairing code the ESP32 reported (MSG_BLE_PASSKEY)
+MSG_DISPLAY = 0x0C      # u8 chunk (0-31), 32 bytes of the OLED picture; the last chunk shows it (optional OLED on the ESP32)
 
 
 def crc8(data, crc=0):

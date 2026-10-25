@@ -38,6 +38,7 @@ public final class WebSocket implements AutoCloseable {
         SSLSocket s = (SSLSocket) factory.createSocket();
         try {
             s.connect(new InetSocketAddress(host, port), 10_000);
+            s.setTcpNoDelay(true);  // small messages (touchpad movement) go out at once
             s.setSoTimeout(readTimeoutMs);
             s.startHandshake();
             byte[] nonce = new byte[16];

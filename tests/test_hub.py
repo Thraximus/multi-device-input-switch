@@ -236,6 +236,72 @@ async def api_tests():
         ble.on_frame(protocol.MSG_KBD_LEDS, a2 + b"\x02")
         check("caps lock LED routed to its host", t2.leds == 2 and t1.leds == 0)
         hub.router.switch(None)
+
+        # --- Touchpad: the device behind t1 drives other machines ---
+        phone = {"id": "agent-phone", "target": t1.id}
+        replies = []
+        sent_ble.clear()
+        hub.touchpads.pointer(phone, {"target": t2.id, "dx": 5, "dy": -3, "buttons": 1}, replies.append)
+        frames = decode(sent_ble)
+        mice = [p for t, p in frames if t == protocol.MSG_MOUSE | protocol.CHANNEL_BLE]
+        check("touchpad selects the Bluetooth host and moves its mouse",
+              ble.selected == t2.address and mice and mice[-1][0] == 1
+              and struct.unpack("<hh", mice[-1][1:5]) == (5, -3), str(frames))
+        check("touchpad tells the device it works", replies == [{"type": "touchpad", "target": t2.id, "ok": True,
+                                                                "reason": ""}], str(replies))
+        sent_ble.clear()
+        hub.touchpads.pointer(phone, {"target": t2.id, "release": True}, replies.append)
+        mice = [p for t, p in decode(sent_ble) if t == protocol.MSG_MOUSE | protocol.CHANNEL_BLE]
+        check("touchpad release lets go of the button", mice and mice[-1][0] == 0, str(mice))
+        hub.touchpads.pointer(phone, {"target": t1.id, "dx": 1}, replies.append)
+        check("touchpad refuses its own device", replies[-1]["ok"] is False and "this device" in replies[-1]["reason"])
+        hub.router.held.clear()
+        hub.router.switch(t1.id)
+        replies.clear()
+        sent_ble.clear()
+        hub.touchpads.pointer(phone, {"target": t2.id, "dx": 1}, replies.append)
+        check("touchpad refuses a second Bluetooth host while the keyboard is on another",
+              replies and replies[-1]["ok"] is False and ble.selected == t1.address
+              and not any(t == protocol.MSG_MOUSE | protocol.CHANNEL_BLE for t, _ in decode(sent_ble)), str(replies))
+        hub.router.switch(None)
+
+        import hub.touchpad as touchpad_mod
+        moves = []
+        real_mouse = touchpad_mod.VirtualInput
+        keys = []
+        touchpad_mod.VirtualInput = lambda: SimpleNamespace(
+            move=lambda *a: moves.append(a), key=lambda c, d: keys.append((c, d)),
+            release=lambda: moves.append("release"), close=lambda: moves.append("close"))
+        try:
+            hub.touchpads.pointer(phone, {"target": None, "dx": 7, "dy": 2, "wheel": 1, "buttons": 2}, replies.append)
+            hub.touchpads.keys(phone, {"target": None, "text": "Hi"}, replies.append)
+            await asyncio.sleep(0.1)
+            hub.touchpads.agent_gone(phone["id"])
+        finally:
+            touchpad_mod.VirtualInput = real_mouse
+        check("touchpad on Linux uses a virtual device, released when the device leaves",
+              moves == [(2, 7, 2, 1, 0), "release", "close"] and hub.touchpads.linux is None, str(moves))
+        check("keyboard mode types on Linux", keys == [(e.KEY_LEFTSHIFT, True), (e.KEY_H, True), (e.KEY_H, False),
+                                                      (e.KEY_LEFTSHIFT, False), (e.KEY_I, True), (e.KEY_I, False)],
+              str(keys))
+
+        from hub.touchpad import key_events
+        ev, skipped = key_events(key="c", mods=["ctrl"], layout="uk")
+        check("keyboard shortcut: Ctrl+C presses Ctrl, C",
+              ev == [(e.KEY_LEFTCTRL, True), (e.KEY_C, True), (e.KEY_C, False), (e.KEY_LEFTCTRL, False)], str(ev))
+        ev, skipped = key_events(text='@"é', layout="uk")
+        check("keyboard text follows the layout and reports what it can't type",
+              ev[:4] == [(e.KEY_LEFTSHIFT, True), (e.KEY_APOSTROPHE, True), (e.KEY_APOSTROPHE, False),
+                         (e.KEY_LEFTSHIFT, False)] and ev[5] == (e.KEY_2, True) and skipped == "é", str(ev))
+
+        sent_ble.clear()
+        replies.clear()
+        hub.touchpads.keys(phone, {"target": t2.id, "key": "enter"}, replies.append)
+        await asyncio.sleep(0.1)
+        kb = [p for t, p in decode(sent_ble) if t == protocol.MSG_KEYBOARD | protocol.CHANNEL_BLE]
+        check("keyboard mode presses keys on a Bluetooth device", [p[2] for p in kb] == [0x28, 0], str(kb))
+        hub.touchpads.agent_gone(phone["id"])
+
         await local({"type": "forget_target", "target": t1.id})
         check("forget removes one host", t1.id not in hub.targets and t2.id in hub.targets
               and not any(t["id"] == t1.id for t in hub.config["targets"]))
@@ -248,6 +314,7 @@ async def api_tests():
 
         pairing = await local({"type": "pair_start", "target": "laptop"})
         check("pair_start", pairing["type"] == "pairing" and pairing["token"], str(pairing)[:200])
+        check("ble_confirm without a waiting code is refused", (await local({"type": "ble_confirm"}))["type"] == "error")
         hub_cert = pairing["hub_cert"]
 
         key_pem, cert_pem = make_self_signed("test-agent")
@@ -335,6 +402,73 @@ async def api_tests():
             check("unpaired agent loses access", True)
     finally:
         await hub.stop()
+
+
+# --- OLED display -----------------------------------------------------------------
+
+from hub import display  # noqa: E402
+
+M = display.Machine
+machines = (M(None, "Linux PC", "pc", True, "this machine"), M("laptop", "Laptop", "laptop", True, "USB"),
+            M("bt-1", "Galaxy Tab S8 Ultra with a long name", "tablet", False, "offline"))
+scene = display.Scene(machines, None)
+shot = display.draw_screen(scene)
+check("display: picture is 128x64, one bit", shot.size == (128, 64) and shot.mode == "1")
+check("display: something is drawn", any(shot.getdata()))
+check("display: holder changes the picture", display.draw_screen(display.Scene(machines, "laptop")).tobytes() != shot.tobytes())
+check("display: offline machine drawn too (long name cut)", any(display.draw_screen(display.Scene(machines, "bt-1")).getdata()))
+check("display: pairing code panel", display.Scene(machines, None, True, "123456").panel == ("pairing", "123456") and
+      display.draw_screen(display.Scene(machines, None, True, "123456")).tobytes() != shot.tobytes())
+check("display: slide differs from both ends", display.draw_screen(display.Scene(machines, "laptop"), scene, 0.5).tobytes()
+      not in (shot.tobytes(), display.draw_screen(display.Scene(machines, "laptop")).tobytes()))
+packed = display.pack(shot)
+check("display: 1024 bytes in SSD1306 page layout", len(packed) == 1024)
+dot = display.Image.new("1", (128, 64), 0)
+dot.putpixel((5, 10), 1)  # page 1, bit 2
+check("display: pixel lands in page byte, LSB on top", display.pack(dot)[128 + 5] == 0b100 and sum(display.pack(dot)) == 4)
+parts = display.chunks(packed)
+check("display: 32 chunks of index + 32 bytes", len(parts) == 32 and all(len(c) == 33 and c[0] == i for i, c in enumerate(parts)) and
+      b"".join(c[1:] for c in parts) == packed)
+
+# --- Bluetooth pairing approval ---------------------------------------------------------
+
+from hub.targets import BleChannel  # noqa: E402
+
+psent = []
+chan = object.__new__(BleChannel)
+chan.passkey, chan.on_state = "123456", lambda: None
+chan.send_frame = lambda t, p: psent.append((t, p))
+chan.confirm(True)
+check("pairing: approval sends the confirm frame and forgets the code",
+      psent == [(protocol.MSG_BLE_CONFIRM, b"\x01")] and chan.passkey is None, str(psent))
+chan.passkey = "654321"
+chan.confirm(False)
+check("pairing: rejection sends 0", psent[-1] == (protocol.MSG_BLE_CONFIRM, b"\x00"))
+try:
+    chan.confirm(True)
+    check("pairing: nothing to approve is an error", False)
+except ValueError:
+    check("pairing: nothing to approve is an error", True)
+
+dsent = []
+fake_channel = SimpleNamespace(passkey=None, pairing=False, send_frame=lambda t, p: dsent.append((t, p)))
+fake_hub = SimpleNamespace(
+    targets={"laptop": SimpleNamespace(id="laptop", name="Laptop", kind="pico", connected=True)},
+    router=SimpleNamespace(active="laptop", pending=None), bluetooth_channels=lambda: [fake_channel],
+    loop=SimpleNamespace(call_later=lambda *a: SimpleNamespace(cancel=lambda: None)))
+feed = display.Display(fake_hub)
+feed.update()
+check("display: first update sends a whole picture", [t for t, _ in dsent] == [protocol.MSG_DISPLAY] * 32 and
+      [p[0] for _, p in dsent] == list(range(32)), str(len(dsent)))
+dsent.clear()
+feed.update()
+check("display: unchanged state not resent", dsent == [])
+feed.update(resend=True)
+check("display: resend repeats it", len(dsent) == 32)
+dsent.clear()
+fake_hub.router.active = None
+feed.update()
+check("display: a new holder slides in (first step sent, rest scheduled)", len(dsent) == 32 and feed._slide is not None)
 
 
 asyncio.run(api_tests())

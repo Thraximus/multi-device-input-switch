@@ -20,6 +20,7 @@
 #include "tinycrypt/aes.h"
 #include "nvs_flash.h"
 
+#include "oled.h"
 #include "protocol.h"
 
 #define HUB_UART     UART_NUM_0
@@ -56,6 +57,12 @@
 // A connection that hasn't been encrypted (bonded) after this long is dropped, so strangers can't
 // hold connection slots.
 #define UNPAIRED_TIMEOUT_US (10 * 1000000LL)
+// While pairing is off nobody should be bonding: a bonded host re-encrypts within a moment, so anything that
+// hasn't been encrypted this soon is a stranger.
+#define STRANGER_TIMEOUT_US (3 * 1000000LL)
+// A new host's pairing code must be approved on the hub within this time, and the phone's own prompt gets
+// another 30 s after that.
+#define CONFIRM_TIMEOUT_US  (30 * 1000000LL)
 
 #define RID_KEYBOARD 1
 #define RID_MOUSE    2
@@ -294,6 +301,11 @@ static SemaphoreHandle_t hub_tx_lock;  // whole frames only, from any task
 static SemaphoreHandle_t ble_lock;     // host table and HID state below
 
 static volatile int64_t pair_until_us; // pairing window end (0 = closed)
+static esp_bd_addr_t confirm_bda;      // host whose pairing code waits for the hub's approval
+static int64_t confirm_until_us;       // 0 = nothing is waiting
+static int64_t pairing_grace_until_us; // unencrypted hosts aren't dropped before this (a pairing is under way)
+static bool adv_discoverable;          // advertising as discoverable (only while pairing is open)
+static void configure_adv(bool discoverable);
 static int64_t last_hub_us;            // last BLE-channel frame from the hub
 static bool released_on_timeout = true;
 
@@ -569,6 +581,15 @@ static void handle_ble_frame(uint8_t type, const uint8_t *p, uint8_t len) {
     case MSG_BLE_FORGET:
         ble_forget(len == 6 ? p : NULL);
         break;
+    case MSG_BLE_CONFIRM:
+        if (len == 1 && confirm_until_us) {
+            confirm_until_us = 0;
+            esp_ble_confirm_reply(confirm_bda, p[0] && pairing_open());
+        }
+        break;
+    case MSG_DISPLAY:
+        if (len >= 1) oled_chunk(p[0], p + 1, len - 1);
+        break;
     case MSG_PING:
         ble_send_state();
         break;
@@ -636,8 +657,21 @@ static void ble_timer_task(void *arg) {
             released_on_timeout = true;
         }
         if (pair_until_us && now >= pair_until_us) pair_until_us = 0;
+        // Nobody approved the code in time, or pairing was switched off meanwhile: refuse it.
+        if (confirm_until_us && (now >= confirm_until_us || !pairing_open())) {
+            confirm_until_us = 0;
+            esp_ble_confirm_reply(confirm_bda, false);
+        }
+        // Only show up in Bluetooth scans while pairing is open; bonded hosts still reconnect.
+        if (pairing_open() != adv_discoverable) {
+            adv_discoverable = pairing_open();
+            esp_ble_gap_stop_advertising();
+            configure_adv(adv_discoverable);
+        }
+        int64_t unpaired_limit = pairing_open() ? UNPAIRED_TIMEOUT_US : STRANGER_TIMEOUT_US;
         for (int i = 0; i < MAX_HOSTS; i++) {
-            if (hosts[i].in_use && !hosts[i].encrypted && now - hosts[i].connected_at_us > UNPAIRED_TIMEOUT_US) {
+            if (hosts[i].in_use && !hosts[i].encrypted && now > pairing_grace_until_us &&
+                now - hosts[i].connected_at_us > unpaired_limit) {
                 esp_ble_gap_disconnect(hosts[i].bda);
                 hosts[i].connected_at_us = now;  // don't repeat every tick while the disconnect completes
             }
@@ -677,6 +711,21 @@ static uint8_t hid_service_uuid128[] = {
     0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0x12, 0x18, 0x00, 0x00,
 };
 
+static void configure_adv(bool discoverable) {
+    esp_ble_adv_data_t adv_data = {
+        .set_scan_rsp = false,
+        .include_name = true,
+        .include_txpower = false,
+        .min_interval = 0x0006,
+        .max_interval = 0x0010,
+        .appearance = 0x03C1,  // keyboard
+        .service_uuid_len = sizeof(hid_service_uuid128),
+        .p_service_uuid = hid_service_uuid128,
+        .flag = (discoverable ? ESP_BLE_ADV_FLAG_GEN_DISC : 0) | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT,
+    };
+    ESP_ERROR_CHECK(esp_ble_gap_config_adv_data(&adv_data));
+}
+
 // Keep advertising while there are free connection slots, so other hosts can (re)connect.
 static void advertise_if_room(void) {
     if (host_count() < MAX_HOSTS) esp_ble_gap_start_advertising(&adv_params);
@@ -685,24 +734,33 @@ static void advertise_if_room(void) {
 static void gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
     switch (event) {
     case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
-        esp_ble_gap_start_advertising(&adv_params);
+        advertise_if_room();
         break;
     case ESP_GAP_BLE_SEC_REQ_EVT:
         esp_ble_gap_security_rsp(param->ble_security.ble_req.bd_addr, true);
         break;
     case ESP_GAP_BLE_NC_REQ_EVT: {
-        // A new bond: only while the hub has opened the pairing window. The passkey goes to the hub so
-        // the user can compare it with the one on the phone.
-        bool accept = pairing_open();
-        uint32_t pk = param->ble_security.key_notif.passkey;
-        uint8_t payload[4] = {(uint8_t)pk, (uint8_t)(pk >> 8), (uint8_t)(pk >> 16), (uint8_t)(pk >> 24)};
-        if (accept) hub_send(MSG_BLE_PASSKEY | CHANNEL_BLE, payload, 4);
-        esp_ble_confirm_reply(param->ble_security.key_notif.bd_addr, accept);
+        // A new bond: only while the pairing window is open, and only after the hub's user has compared the
+        // code with the one on the phone and approved it (MSG_BLE_CONFIRM). One at a time.
+        xSemaphoreTake(ble_lock, portMAX_DELAY);
+        if (pairing_open() && !confirm_until_us) {
+            int64_t now = esp_timer_get_time();
+            uint32_t pk = param->ble_security.key_notif.passkey;
+            uint8_t payload[4] = {(uint8_t)pk, (uint8_t)(pk >> 8), (uint8_t)(pk >> 16), (uint8_t)(pk >> 24)};
+            memcpy(confirm_bda, param->ble_security.key_notif.bd_addr, 6);
+            confirm_until_us = now + CONFIRM_TIMEOUT_US;
+            pairing_grace_until_us = confirm_until_us + 30 * 1000000LL;
+            hub_send(MSG_BLE_PASSKEY | CHANNEL_BLE, payload, 4);
+        } else {
+            esp_ble_confirm_reply(param->ble_security.key_notif.bd_addr, false);
+        }
+        xSemaphoreGive(ble_lock);
         break;
     }
     case ESP_GAP_BLE_AUTH_CMPL_EVT: {
         xSemaphoreTake(ble_lock, portMAX_DELAY);
         uint8_t *bda = param->ble_security.auth_cmpl.bd_addr;
+        confirm_until_us = 0;
         diag_auth[0]++;
         diag_auth[1] += param->ble_security.auth_cmpl.success;
         diag_auth[2] = param->ble_security.auth_cmpl.success;
@@ -858,18 +916,7 @@ static void ble_setup(void) {
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &keys, 1);
 
     esp_ble_gap_set_device_name(DEVICE_NAME);
-    esp_ble_adv_data_t adv_data = {
-        .set_scan_rsp = false,
-        .include_name = true,
-        .include_txpower = false,
-        .min_interval = 0x0006,
-        .max_interval = 0x0010,
-        .appearance = 0x03C1,  // keyboard
-        .service_uuid_len = sizeof(hid_service_uuid128),
-        .p_service_uuid = hid_service_uuid128,
-        .flag = ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT,
-    };
-    ESP_ERROR_CHECK(esp_ble_gap_config_adv_data(&adv_data));
+    configure_adv(false);  // pairing starts closed, so not discoverable
     ESP_ERROR_CHECK(esp_ble_gatts_app_register(0));
 }
 
@@ -890,6 +937,7 @@ void app_main(void) {
     xTaskCreate(hub_rx_task, "hub_rx", 4096, NULL, 10, NULL);
     xTaskCreate(pico_rx_task, "pico_rx", 4096, NULL, 10, NULL);
 
+    oled_start();
     ble_setup();
     xTaskCreate(ble_timer_task, "ble_timer", 4096, NULL, 5, NULL);
 }

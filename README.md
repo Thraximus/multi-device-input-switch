@@ -12,7 +12,7 @@ images), notifications and incoming calls on every device, and a tray app on Lin
 ## Features
 
 - **Instant switching** between the PC, the laptop and up to four Bluetooth devices, with a hotkey, the tray
-  menu or the GUI. Keys are never left stuck: switching waits until everything is released.
+  menu, the GUI, or from the phone. Keys are never left stuck: switching waits until everything is released.
 - **Real hardware input**: the laptop sees a USB composite device (boot keyboard, 16-bit mouse at 1000 Hz,
   media keys, Xbox 360 controller with rumble); phones and tablets see a Bluetooth LE keyboard and mouse.
 - **Per-device choice**: decide for every keyboard, mouse or controller whether it follows the switch or stays.
@@ -21,6 +21,7 @@ images), notifications and incoming calls on every device, and a tray app on Lin
   (memory only; password-manager copies are never kept).
 - **Notifications**: phone/tablet notifications on the PC (with dismiss and inline reply), mirrored to the
   other devices, filtered per app.
+- **Touchpad & keyboard**: a phone or tablet becomes a touchpad and keyboard for the PC or the laptop.
 - **Calls**: incoming calls — regular, WhatsApp, LINE, … — pop up on the PC even over full-screen games,
   with Answer / Decline.
 - **Linux GUI + tray** (PySide6) with two looks: native Plasma/Breeze and the "Cogitator" skin. A matching
@@ -71,7 +72,7 @@ a tray icon on Windows, and the **Switcher** app on Android.
 ## Requirements
 
 - **Hub**: Linux with evdev/uinput (tested on Arch Linux with KDE Plasma 6 on Wayland), Python 3.11+,
-  `python-evdev`, `pyudev`, `websockets`, `cryptography`, `jeepney`, `PySide6`, `wl-clipboard`, `adb`.
+  `python-evdev`, `pyudev`, `websockets`, `cryptography`, `jeepney`, `PySide6`, `wl-clipboard`, `adb`; `Pillow` for the optional OLED.
 - **Laptop**: Windows 10/11. The agent ships its own Python; no admin rights needed.
 - **Phones/tablets**: Android 8+ (clipboard and notification features tested on Android 11 and 13).
 - **Building**: Pico SDK (submodule), ESP-IDF 6, Android SDK + JDK 17/21 for the app.
@@ -79,6 +80,5 @@ a tray icon on Windows, and the **Switcher** app on Android.
 ## Status
 
 Working and used daily: switching, laptop + phone + tablet targets, two-way controllers, clipboard,
-notifications, calls, the GUIs, self-updates. Planned: audio routing (the PC as the audio output for every
-machine, including phone calls — needs a USB Bluetooth adapter), file sharing, using the phone as a touchpad,
-the laptop's own keyboard/touchpad on Linux, screen sharing.
+notifications, calls, the touchpad, the GUIs, self-updates. Planned: audio routing (the PC as the audio output for every
+machine, including phone calls — needs a USB Bluetooth adapter), file sharing, the laptop's own keyboard/touchpad on Linux, screen sharing.

@@ -621,11 +621,18 @@ class BluetoothPanel(Panel):
         self.hint = Body("Pair a phone or tablet: start pairing, then pick the hub in its Bluetooth settings. "
                          "It becomes a new machine to switch to. Up to 4 stay connected at once.", "text2", wrap=True)
         self.body.addWidget(self.hint)
-        self.code_label = Caption("pairing code — confirm it matches on the phone/tablet")
+        self.code_label = Caption("pairing code — approve only if it matches the phone/tablet")
         self.code = Heading("", 34, "amber" if T().ornate else "accent")
         self.code.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.body.addWidget(self.code_label)
         self.body.addWidget(self.code)
+        self.approve = Button("Approve", "primary")
+        self.approve.clicked.connect(lambda: self.confirm(True))
+        self.reject = Button("Reject", "danger")
+        self.reject.clicked.connect(lambda: self.confirm(False))
+        self.confirm_row = QWidget()
+        self.confirm_row.setLayout(hbox(self.approve, self.reject, None, spacing=8))
+        self.body.addWidget(self.confirm_row)
         self.pair = Button("Start pairing", "primary")
         self.pair.clicked.connect(self.toggle_pairing)
         self.countdown = Caption()
@@ -657,6 +664,7 @@ class BluetoothPanel(Panel):
         code = b.get("passkey")
         self.code_label.setVisible(bool(code))
         self.code.setVisible(bool(code))
+        self.confirm_row.setVisible(bool(code))
         if code:
             s = f"{int(code):06d}"
             self.code.setText(f"{s[:3]} {s[3:]}")
@@ -666,6 +674,9 @@ class BluetoothPanel(Panel):
         left = int(self.until - time.monotonic())
         self.countdown.set(f"open for {left} s — pick \"Switcher Hub\" on the phone" if self.pairing and left > 0
                            else ("pairing open" if self.pairing else ""))
+
+    def confirm(self, accept):
+        self.page.client.request({"type": "ble_confirm", "accept": accept}, self.page.reply())
 
     def toggle_pairing(self):
         seconds = 0 if self.pairing else self.PAIR_SECONDS

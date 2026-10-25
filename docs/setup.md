@@ -22,6 +22,7 @@ The ones you'll almost certainly set:
 |---|---|
 | `SWITCHER_SERIAL_PORT` | the ESP32's serial port; use the stable name from `ls /dev/serial/by-id/` |
 | `SWITCHER_INSTALL_LAYOUT` | `us` or `uk`: the Windows machine's keyboard layout (used when the Pico types the agent installer) |
+| `SWITCHER_KEYBOARD_LAYOUT` | `us` or `uk`: the machines' layout when a phone types on them (default: `SWITCHER_INSTALL_LAYOUT`) |
 | `IDF_PATH` | ESP-IDF checkout, for building the ESP32 firmware |
 | `ANDROID_HOME`, `JAVA_HOME` | Android SDK and a JDK 17/21, for building the Android app |
 | `SWITCHER_ANDROID_APP_ID` | the app's ID on your devices (pick your own reverse-domain name) |
@@ -36,7 +37,7 @@ Dependencies (Arch package names; use your distribution's equivalents):
 
 ```sh
 sudo pacman -S python-evdev python-pyudev python-websockets python-cryptography python-jeepney \
-               pyside6 wl-clipboard android-tools
+               pyside6 wl-clipboard android-tools python-pillow   # python-pillow: only for the optional OLED
 ```
 
 The hub reads input devices and creates virtual ones, so your user needs access to `/dev/input/event*`
@@ -68,6 +69,7 @@ python3 -m hub.ctl status | watch
 python3 -m hub.ctl switch laptop|linux|TARGET
 python3 -m hub.ctl transfer DEVICE_ID on|off
 python3 -m hub.ctl ble-pair [SECONDS]                 open Bluetooth pairing
+python3 -m hub.ctl ble-confirm [--reject]             approve the pairing code shown by status
 python3 -m hub.ctl rename TARGET NAME
 python3 -m hub.ctl forget TARGET                      unpair a Bluetooth device
 python3 -m hub.ctl install-agent TARGET [--layout us|uk]
@@ -110,8 +112,10 @@ Updates: bump `agent/VERSION` and run the build again; agents update themselves 
 ### Bluetooth (input)
 
 **Machines → Bluetooth → Start pairing**, then pick the hub (`SWITCHER_BLE_NAME`) in the device's Bluetooth
-settings. The pairing code appears large in the GUI — compare it with the one on the device and confirm
-within about 30 s. Each paired device becomes a machine of its own; up to four stay connected, so switching
+settings. The pairing code appears large in the GUI (and on the OLED) — compare it with the one on the device and
+click **Approve** (or run `hub.ctl ble-confirm`) within 30 s, then confirm on the device. Without the hub's approval
+nothing pairs. Pairing is off by default: the hub is only discoverable while it is open (2 minutes, one new device),
+and connections that aren't a paired device are dropped after 3 s. Each paired device becomes a machine of its own; up to four stay connected, so switching
 between them is instant.
 
 Android hides the on-screen keyboard while a hardware keyboard is connected. Because the hub's keyboard
@@ -130,7 +134,7 @@ ones by its Bluetooth address, installs the app, grants the permissions it needs
 USB isn't needed: new builds reach the devices over Wi-Fi (silently on Android 12+, with a "tap to install"
 notification on older versions).
 
-Features are switched per device on the PC — **Machines** (clipboard) and **Notifications** (sending
+Features are switched per device on the PC — **Machines** (clipboard, touchpad) and **Notifications** (sending
 notifications, choosing apps, showing other devices' notifications, calls). See [Android app](android.md)
 for what each needs.
 

@@ -39,6 +39,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".TouchpadActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- Started by the hub over ADB with the pairing token. DUMP is held by the adb shell but can't
              be obtained by ordinary apps, so nothing else on the tablet can start a pairing. -->
         <activity

@@ -25,7 +25,7 @@
 | **Pico firmware** (`firmware/src/`) | RP2040, Pico SDK + TinyUSB | USB composite device: boot keyboard, mouse, media keys, Xbox 360 (XInput) |
 | **ESP32 router** (`firmware/esp32/`) | ESP32, ESP-IDF | forwards laptop messages to the Pico; Bluetooth LE HID for up to four hosts |
 | **Windows agent** (`agent/`) | Windows, embedded Python | tray, clipboard, controllers → Linux, notification toasts, Pico flashing, self-update |
-| **Android app** (`android/`) | Kotlin + Compose | clipboard, notifications, calls, status; feature modules switched from the PC |
+| **Android app** (`android/`) | Kotlin + Compose | clipboard, touchpad, notifications, calls, status; feature modules switched from the PC |
 
 ### Hub internals
 
@@ -36,7 +36,10 @@
 - `targets.py` — the serial link (`SerialLink`, framing, heartbeat), the USB target (`PicoTarget`, HID and
   gamepad state → reports) and the Bluetooth channel/targets (`BleChannel`, `BleTarget`).
 - `api.py` — the three listeners (below), agent capabilities, installing agents, firmware flashing via agents.
-- `clipboard.py`, `notifications.py`, `remote.py` (agent controllers → uinput), `agent_settings.py`
+- `display.py` — draws the optional OLED's picture (Pillow, the GUI's fonts) with a slide when the machine changes, and
+  resends it every second; the ESP32 only shows it, and shows "HUB OFFLINE" when the pictures stop.
+- `clipboard.py`, `notifications.py`, `remote.py` (agent controllers → uinput), `touchpad.py` (phones as
+  touchpads for any machine), `agent_settings.py`
   (per-device feature switches and settings), `android.py` (ADB install), `security.py`, `config.py`, `env.py`.
 
 ## Serial protocol (hub ↔ ESP32 ↔ Pico)
@@ -57,6 +60,8 @@ channel 0x40 is handled by the ESP32 itself as Bluetooth input.
 | bootloader | 0x06 | — (Pico reboots into its USB bootloader) |
 | gamepad | 0x0B | buttons (XInput layout), triggers, sticks |
 | Bluetooth: pair / forget / select | 0x48 / 0x49 / 0x4A | seconds / address / address of the host that receives input |
+| Bluetooth: approve pairing code | 0x4D | 1 = approve, 0 = reject (answer to 0xC4) |
+| OLED picture (optional) | 0x4C | chunk index (0-31), 32 bytes of the 128x64 picture (SSD1306 pages); the last chunk shows it |
 
 | Device → hub | Type | Payload |
 |---|---|---|
@@ -88,11 +93,12 @@ Messages are JSON objects with a `type`; requests may carry an `id` that the rep
 
 **Agent → hub:** `hello` (name, platform, version, capabilities, switchable features), `capabilities`,
 `switch`, `clipboard`, `devices` / `pad` (controllers), `notification` / `notification_removed` /
-`notification_apps`, `mirror_action`, `call`, `pico_flash_result`, `get_update` / `get_file`.
+`notification_apps`, `mirror_action`, `call`, `pointer` / `keys` (touchpad and keyboard), `pico_flash_result`, `get_update` / `get_file`.
 
 **Hub → agent:** `welcome`, `config` (theme, enabled features, feature settings), `status` (who holds the
 devices), `clipboard`, `forward` / `pad_rumble`, `notification_action`, `mirror_notification` /
-`mirror_notification_removed`, `call_action`, `pico_flash`, `update` / `file`.
+`mirror_notification_removed`, `call_action`, `touchpad` (whether the chosen machine can be driven), `touchpad_skipped`,
+`pico_flash`, `update` / `file`.
 
 Agents announce **capabilities**, and the hub only routes what an agent announced — a feature switched off on
 the PC is stopped on the device, which then stops announcing it.
@@ -123,6 +129,7 @@ Input must never circle between machines:
 - Notifications mirrored to a device are posted by the Switcher app, which never forwards its own
   notifications.
 - Clipboard items carry a content hash; a machine never sends back what it just received.
+- The touchpad's virtual mouse on Linux is a `pi-switcher-hub …` device too, so it never follows the switch.
 
 ## Clipboard, notifications, calls
 
@@ -134,6 +141,8 @@ Input must never circle between machines:
   the hub shows them on the desktop via `org.freedesktop.Notifications` (with "Dismiss on device" and inline
   reply) and mirrors them to devices with mirroring switched on. Actions travel back to the source device.
   Re-sent notifications after a reconnect are flagged as replays and never pop up again.
+  A popup stays up `SWITCHER_NOTIFICATION_SECONDS` (default 8), even when the app withdraws the notification
+  sooner, as chat apps do when they re-post or regroup.
 - **Calls**: ringing calls become critical desktop notifications, which Plasma shows even in Do Not Disturb
   and over full-screen apps; Answer/Decline act on the phone. Regular calls come from the phone state, app
   calls (WhatsApp, LINE, …) from their call notifications.

@@ -127,9 +127,12 @@ class NotificationsFeature : Feature {
         val h = host ?: return
         val n = sbn.notification
         if (sbn.packageName == l.packageName) return
-        if (n.flags and (Notification.FLAG_ONGOING_EVENT or Notification.FLAG_FOREGROUND_SERVICE) != 0) return
+        // Calls are the Calls feature's (a ringing popup with Answer/Decline). With it off, a ringing call still
+        // comes through here as a notification, rather than not at all.
+        val call = n.category == Notification.CATEGORY_CALL
+        if (call && CallsFeature.active != null) return
+        if (!call && n.flags and (Notification.FLAG_ONGOING_EVENT or Notification.FLAG_FOREGROUND_SERVICE) != 0) return
         if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
-        if (n.category == Notification.CATEGORY_CALL) return  // the Calls feature's, not a regular notification
         if (seenApps.add(sbn.packageName) && sbn.packageName !in launchable(l)) host?.let { sendAppList(it) }
         if (!allowed(sbn.packageName)) return  // filtered on the PC's say-so; never leaves the device
         val extras = n.extras

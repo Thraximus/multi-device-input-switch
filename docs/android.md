@@ -1,8 +1,10 @@
 # Android app ("Switcher")
 
 The app runs as a foreground service that keeps an encrypted connection to the hub over Wi-Fi. Its screen
-shows the connection, which machine has the keyboard and mouse (with **Use here** / **Return to PC**), and
-one card per feature with its status and anything Android still needs to allow. Settings live on the PC:
+shows the connection, which machine has the keyboard and mouse (with **Use here** / **Return to PC**, and
+**Send to** any other connected machine), and one card per feature with its status and anything Android
+still needs to allow. **Disconnect** (on the screen or the status notification) closes the connection and
+stops every feature; it stays off, across reboots too, until **Connect**. Settings live on the PC:
 features are switched per device there, and the PC picks the app's look (Material or Cogitator).
 
 Built with Kotlin and Jetpack Compose (`android/`); the TLS, WebSocket and pairing core is plain Java with no
@@ -13,11 +15,24 @@ libraries. Minimum Android 8; tested on Android 11 and 13.
 | Feature | Default | What it needs on the device |
 |---|---|---|
 | **Clipboard** — text and images both ways | on | log access and "display over other apps" (both granted by the installer) |
+| **Touchpad & keyboard** — this screen as a touchpad and keyboard for the PC or the laptop | on | — |
 | **Notifications** — this device's notifications to the PC (filtered per app on the PC) | off | notification access (granted by the installer) |
 | **Other devices' notifications** — shown here, with Dismiss and Reply acting on the source | off | permission to post notifications |
 | **Calls** — incoming calls on the PC, even over games; Answer/Decline from there | off | phone state, call log, contacts, answer calls (the app asks), notification access for app calls |
 
-Calls only appears on devices that can make calls.
+Calls only appears on devices that can make calls. With Calls off, a ringing call still reaches the PC as an ordinary notification
+(if Notifications is on).
+
+**Touchpad**: one finger moves the pointer (faster movements go further), a tap clicks, two fingers scroll
+(natural direction) and a two-finger tap right-clicks; the Left/Right buttons below the pad can be held for
+dragging. Pick the machine at the top. The hub moves that machine's mouse whoever has the keyboard (another
+phone or tablet works too, unless the keyboard is on a third one: Bluetooth reaches one at a time).
+
+**Keyboard** (on the touchpad screen) opens the phone's keyboard; everything typed goes straight to the
+machine, with no text box in between. A row above it adds Esc, Tab, arrows, Home/End, Page Up/Down, Delete,
+F1–F12, and Ctrl/Alt/Shift/Win, which apply to the next key (Ctrl, then C = copy). Text is turned into key
+presses for the machine's layout (`SWITCHER_KEYBOARD_LAYOUT`, `us` or `uk`); characters that layout has no
+key for (e.g. accented letters) are skipped, and the screen says which.
 
 ## Reading the clipboard in the background
 
@@ -61,12 +76,12 @@ to confirm. The APK must always be signed with the same key (`SWITCHER_KEYSTORE`
 A feature is one class implementing `features/Feature.kt`:
 
 ```kotlin
-class TouchpadFeature : Feature {
-    override val id = "touchpad"                       // used in the hub config and protocol
-    override val title = "Touchpad"
-    override val summary = "Use this screen as a touchpad for the PC"
-    override val icon = Icons.Outlined.TouchApp
-    override val messageTypes = setOf("touchpad_mode") // hub → device messages it handles
+class FilesFeature : Feature {
+    override val id = "files"                          // used in the hub config and protocol
+    override val title = "Files"
+    override val summary = "Send files to the PC"
+    override val icon = Icons.Outlined.Folder
+    override val messageTypes = setOf("file_offer")    // hub → device messages it handles
     override val status = MutableStateFlow("off")
 
     override fun permissions(ctx: Context) = listOf<Need>()   // shown on its card, with a fix button

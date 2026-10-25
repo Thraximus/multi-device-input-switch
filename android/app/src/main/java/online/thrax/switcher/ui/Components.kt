@@ -14,6 +14,8 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -23,6 +25,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DesktopWindows
+import androidx.compose.material.icons.outlined.LaptopWindows
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -61,6 +67,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import online.thrax.switcher.core.Machine
 import online.thrax.switcher.theme.LocalFaces
 import online.thrax.switcher.theme.LocalTokens
 import online.thrax.switcher.theme.Tokens
@@ -364,5 +371,28 @@ fun Btn(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, style:
     ) {
         if (icon != null) Icon(icon, null, tint = ink, modifier = Modifier.size(16.dp))
         Text(text.uppercase(), color = ink, fontFamily = LocalFaces.current.label, fontSize = 11.5.sp, letterSpacing = 1.8.sp)
+    }
+}
+
+// --- machines -------------------------------------------------------------------------------------------
+
+/** The icon for a machine of this kind ("linux", "pico", "ble"). */
+fun machineIcon(kind: String): ImageVector = when (kind) {
+    "linux" -> Icons.Outlined.DesktopWindows
+    "pico" -> Icons.Outlined.LaptopWindows
+    else -> Icons.Outlined.PhoneAndroid
+}
+
+/** Machines to pick from, one button each; [selected] is drawn as the primary one. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun MachinePicker(machines: List<Machine>, selected: (Machine) -> Boolean, onPick: (Machine) -> Unit,
+                  modifier: Modifier = Modifier) {
+    FlowRow(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (m in machines) {
+            Btn(m.name, { onPick(m) }, style = if (selected(m)) BtnStyle.Primary else BtnStyle.Quiet,
+                icon = machineIcon(m.kind))
+        }
     }
 }

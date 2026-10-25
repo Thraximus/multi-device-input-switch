@@ -4,6 +4,15 @@ import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONObject
 
+/** A machine the hub can send the keyboard/mouse to; [id] null is the hub's own PC. */
+data class Machine(
+    val id: String?,
+    val name: String,
+    /** "linux", "pico" (USB through the Pico) or "ble" (Bluetooth). */
+    val kind: String,
+    val connected: Boolean,
+)
+
 /** Which machine holds the keyboard/mouse, as the hub reports it. */
 data class Holder(
     val name: String,
@@ -12,11 +21,17 @@ data class Holder(
     /** This device's target id at the hub (for "use the keyboard here"). */
     val selfTarget: String?,
     val pending: Boolean,
+    /** The hub's PC first, then every target, this device included. */
+    val machines: List<Machine> = emptyList(),
+    /** Target id of the machine holding them; null for the hub's PC. */
+    val at: String? = null,
 )
 
 /** Everything the home screen shows, published by the service. */
 data class AppState(
     val paired: Boolean = false,
+    /** Disconnected from the app: the service stays stopped (also across reboots) until Connect. */
+    val stopped: Boolean = false,
     val host: String = "",
     val agentId: String = "",
     val connected: Boolean = false,
@@ -38,6 +53,11 @@ object App {
  */
 class DeviceConfig(ctx: Context) {
     private val prefs = ctx.getSharedPreferences("device-config", Context.MODE_PRIVATE)
+
+    /** The user disconnected; nothing starts the connection again until they connect. */
+    var stopped: Boolean
+        get() = prefs.getBoolean("stopped", false)
+        set(v) = prefs.edit().putBoolean("stopped", v).apply()
 
     var skin: String
         get() = prefs.getString("skin", "material") ?: "material"

@@ -50,6 +50,23 @@ itself. The Pico is plugged into the laptop and shows up there as an ordinary US
 - Both sides use 3.3 V logic, so no level shifting is needed.
 - The link runs at 921600 baud (`SWITCHER_LINK_BAUD`); keep the wires short (≤ 20 cm).
 
+## Optional OLED
+
+A 0.96" 128x64 SSD1306 module with an I2C interface (4 pins) on the ESP32 shows which machine holds the keyboard and
+mouse, who is connected, and the Bluetooth pairing code. Without one nothing changes.
+
+| ESP32 DevKit | OLED | Signal |
+|---|---|---|
+| 3V3 | VCC | power (not 5 V) |
+| GND | GND | ground |
+| GPIO 21 (D21) | SDA | I2C data |
+| GPIO 22 (D22) | SCL | I2C clock |
+
+- The pin order on the module differs between makers: read the silkscreen, a swapped VCC and GND can kill it.
+  The module is expected at I2C address 0x3C. Other pins: `SWITCHER_ESP32_OLED_SDA_PIN` / `SWITCHER_ESP32_OLED_SCL_PIN`.
+- The screen switches itself off after `SWITCHER_OLED_SLEEP_SECONDS` (default 600) without a change, to spare the
+  pixels, and wakes on the next change. `0` keeps it on.
+
 ## Firmware settings
 
 Both firmwares are built with values from the repo's `.env` (see [Setup → Configuration](setup.md#configuration)):
@@ -60,7 +77,8 @@ Both firmwares are built with values from the repo's `.env` (see [Setup → Conf
 | `SWITCHER_USB_MANUFACTURER`, `SWITCHER_USB_PRODUCT` | `pi-switcher-hub`, `Switcher Hub` | USB strings the laptop shows |
 | `SWITCHER_BLE_NAME` | `Switcher Hub` | the name phones show when pairing |
 | `SWITCHER_LINK_BAUD` | `921600` | serial speed hub ↔ ESP32 ↔ Pico (the hub reads it too) |
-| pin settings | see above | UART wiring |
+| pin settings | see above | UART and OLED wiring |
+| `SWITCHER_OLED_SLEEP_SECONDS` | `600` | OLED sleep timeout (0 = never) |
 
 Change one, then rebuild and reflash both boards (and restart the hub) so they agree.
 

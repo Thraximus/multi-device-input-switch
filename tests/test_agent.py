@@ -18,6 +18,7 @@ tmp = Path(tempfile.mkdtemp(prefix="agenttest-"))
 os.environ["XDG_CONFIG_HOME"] = str(tmp / "config")
 os.environ["XDG_RUNTIME_DIR"] = str(tmp / "run")
 os.environ["SWITCHER_API_PORT"] = "47310"  # not the real hub's ports
+os.environ["SWITCHER_NOTIFICATION_SECONDS"] = "1"  # removals wait this long; keep the test quick
 os.environ["SWITCHER_PAIRING_PORT"] = "47311"
 os.environ["SWITCHER_ENV_FILE"] = str(tmp / "no.env")  # the repo's .env doesn't apply to tests
 (tmp / "run").mkdir()
