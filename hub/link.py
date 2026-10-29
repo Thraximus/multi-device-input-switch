@@ -1,6 +1,9 @@
 """Raw serial link to the Pico (through the ESP32 DevKit's CP2102), without pyserial."""
+import fcntl
 import os
+import struct
 import termios
+import time
 
 from . import env, protocol
 from .config import SERIAL_PORT
@@ -24,6 +27,15 @@ class Link:
         attrs[6][termios.VMIN] = 0
         attrs[6][termios.VTIME] = 0
         termios.tcsetattr(self.fd, termios.TCSANOW, attrs)
+        termios.tcflush(self.fd, termios.TCIOFLUSH)
+        self.parser = protocol.Parser()
+
+    def reset_esp32(self):
+        """Pulse EN through the DevKit's auto-reset circuit (RTS -> EN, DTR -> IO0; DTR stays low so it boots the app)."""
+        for flag, bits in ((termios.TIOCMBIC, termios.TIOCM_DTR), (termios.TIOCMBIS, termios.TIOCM_RTS)):
+            fcntl.ioctl(self.fd, flag, struct.pack("I", bits))
+        time.sleep(0.1)
+        fcntl.ioctl(self.fd, termios.TIOCMBIC, struct.pack("I", termios.TIOCM_RTS))
         termios.tcflush(self.fd, termios.TCIOFLUSH)
         self.parser = protocol.Parser()
 

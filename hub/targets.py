@@ -18,6 +18,10 @@ PING_INTERVAL = 0.1
 # The Pico answers every ping; this long without a status frame means the link is gone.
 STATUS_TIMEOUT = 1.0
 RECONNECT_INTERVAL = 1.0
+# The ESP32 answers every BLE-channel ping. A link that stays silent this long means it is hung (it can wedge
+# during boot), so reset it, but no more often than RESET_COOLDOWN.
+SILENCE_RESET = 5.0
+RESET_COOLDOWN = 15.0
 
 
 class HidState:
@@ -218,6 +222,8 @@ class SerialLink:
         self.loop = loop
         self.port = port
         self.link = None
+        self._opened = self._last_rx = 0.0
+        self._reset_at = -RESET_COOLDOWN
         self.channels = {}  # channel -> handler
         self._task = None
 
@@ -261,6 +267,7 @@ class SerialLink:
             if self.link is None:
                 try:
                     self.link = Link(self.port)
+                    self._opened = self._last_rx = time.monotonic()
                     self.loop.add_reader(self.link.fileno(), self._on_readable)
                     log.info("link open on %s", self.port)
                 except OSError:
@@ -268,11 +275,23 @@ class SerialLink:
             else:
                 for handler in list(self.channels.values()):
                     handler.poll()
+                self._watchdog()
                 await asyncio.sleep(PING_INTERVAL)
             for target in self._targets():
                 if target.connected != was.get(id(target), False):
                     was[id(target)] = target.connected
                     target.on_change(target)
+
+    def _watchdog(self):
+        now = time.monotonic()
+        if now - self._last_rx < SILENCE_RESET or now - self._reset_at < RESET_COOLDOWN:
+            return
+        log.warning("%s: ESP32 silent for %.0fs, resetting it", self.port, now - self._last_rx)
+        self._reset_at = now
+        try:
+            self.link.reset_esp32()
+        except OSError as exc:
+            log.warning("%s: ESP32 reset failed: %s", self.port, exc)
 
     def _on_readable(self):
         try:
@@ -280,6 +299,8 @@ class SerialLink:
         except OSError:
             self._close()
             return
+        if frames:
+            self._last_rx = time.monotonic()
         for msg_type, payload in frames:
             handler = self.channels.get(msg_type & protocol.CHANNEL_MASK)
             if handler is not None:
